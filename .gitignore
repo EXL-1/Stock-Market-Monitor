@@ -1,0 +1,16 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# n8n local exports with credentials (never commit these)
+*.env
+.env*
+secrets/
+
+# Personal/local overrides
+workflows/*.local.json

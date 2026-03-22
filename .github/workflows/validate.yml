@@ -1,0 +1,73 @@
+name: Validate n8n Workflows
+
+on:
+  push:
+    paths:
+      - 'workflows/**'
+  pull_request:
+    paths:
+      - 'workflows/**'
+
+jobs:
+  validate:
+    name: Validate workflow JSON
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate JSON syntax
+        run: |
+          echo "Checking JSON syntax for all workflow files..."
+          failed=0
+          for file in workflows/*.json; do
+            if python3 -m json.tool "$file" > /dev/null 2>&1; then
+              echo "  ✓ $file"
+            else
+              echo "  ✗ $file — INVALID JSON"
+              failed=1
+            fi
+          done
+          if [ "$failed" -eq 1 ]; then
+            echo "One or more workflow files contain invalid JSON."
+            exit 1
+          fi
+          echo "All workflow files are valid JSON."
+
+      - name: Check for sensitive data
+        run: |
+          echo "Scanning for potentially sensitive data..."
+          failed=0
+
+          # Check for real email addresses (basic pattern, excludes placeholder)
+          if grep -rn --include="*.json" -E '[a-zA-Z0-9._%+-]+@(gmail|hotmail|yahoo|outlook)\.(com|co\.uk)' workflows/ \
+            | grep -v "YOUR_EMAIL@example.com"; then
+            echo "WARNING: Possible real email address found in workflow files."
+            failed=1
+          fi
+
+          # Check for real n8n credential/workflow IDs (16-char alphanumeric, not UUID format)
+          # UUIDs (node IDs) contain dashes and are safe to keep
+          if grep -rn --include="*.json" -E '"id": "[a-zA-Z0-9]{16}"' workflows/ \
+            | grep -v "YOUR_"; then
+            echo "WARNING: Possible real credential/workflow ID found. Replace with a YOUR_* placeholder."
+            failed=1
+          fi
+
+          if [ "$failed" -eq 1 ]; then
+            echo "Sensitive data check failed. Please sanitize before pushing."
+            exit 1
+          fi
+          echo "No sensitive data detected."
+
+      - name: Verify required placeholders exist
+        run: |
+          echo "Checking that credential placeholders are in place..."
+          for file in workflows/*.json; do
+            if grep -q "YOUR_" "$file"; then
+              echo "  ✓ $file has placeholder credentials"
+            else
+              echo "  ⚠ $file — no placeholders found (may have real credentials)"
+            fi
+          done

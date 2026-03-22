@@ -1,0 +1,215 @@
+{
+  "name": "Stock Market Monitor - Gemini AI + Gmail",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// SINGLE CODE NODE: Fetch all stocks, calculate indicators\n// Uses this.helpers.httpRequest which IS available in n8n\n// FIXED: Added &events=div to get dividend data\n// ============================================================\n\nvar usStocks = [\n  'AAPL','MSFT','AMZN','GOOGL','META','NVDA','TSLA','BRK-B',\n  'UNH','JNJ','V','MA','PG','HD','DIS','PYPL','CRM','ADBE',\n  'NFLX','INTC','AMD','CSCO','PEP','KO','MRK','PFE','ABT',\n  'TMO','DHR','AVGO','TXN','QCOM','COST','WMT','MCD','NKE',\n  'SBUX','LOW','SPGI','ICE','CB','MMC','AON','ADP','FIS',\n  'FISV','AXP','GS','JPM','BAC','WFC','C','MS','BLK',\n  'SCHW','USB','PNC','TFC','COF','GM','F','CAT','DE',\n  'HON','MMM','GE','RTX','LMT','NOC','BA','UPS','FDX',\n  'UNP','CSX','XOM','CVX','COP','SLB','EOG','OXY',\n  'MPC','VLO','PSX','NEE','DUK','SO','D','AEP','EXC',\n  'SRE','ED','AMT','PLD','CCI','EQIX','SPG','WELL','O',\n  'LIN','APD','SHW','ECL','DD','EMR','ROP','ACN','INTU',\n  'NOW','PANW','CDNS','SNPS','MRNA','GILD','AMGN','REGN',\n  'BIIB','VRTX','BMY','LLY','ZTS','ISRG','MDT','SYK',\n  'BSX','EW','DXCM','KMB','CL','EL','PGR'\n];\n\nvar euStocks = [\n  'SAP.DE','SIE.DE','ALV.DE','MUV2.DE','BAS.DE','BAYN.DE',\n  'BMW.DE','MBG.DE','ADS.DE','DTE.DE','DPW.DE','IFX.DE',\n  'MC.PA','OR.PA','TTE.PA','SAN.PA','AI.PA','BNP.PA',\n  'SU.PA','CS.PA','GLE.PA','CAP.PA','VIV.PA','EN.PA',\n  'RI.PA','BN.PA','ORA.PA',\n  'ASML.AS','INGA.AS','PHIA.AS','AD.AS','WKL.AS',\n  'UNA.AS','RAND.AS',\n  'NESN.SW','NOVN.SW','ROG.SW','ZURN.SW','SREN.SW',\n  'ABBN.SW','LONN.SW',\n  'ISP.MI','UCG.MI','ENEL.MI','ENI.MI','RACE.MI',\n  'STLAM.MI','TEN.MI',\n  'SAN.MC','BBVA.MC','IBE.MC','TEF.MC','ITX.MC',\n  'AMS.MC','FER.MC','REP.MC','GRF.MC','CABK.MC',\n  'ABI.BR','KBC.BR','UCB.BR',\n  'NOKIA.HE','NESTE.HE',\n  'MAERSK-B.CO','NOVO-B.CO','CARL-B.CO'\n];\n\nvar ukStocks = [\n  'SHEL.L','AZN.L','HSBA.L','ULVR.L','GSK.L','RIO.L',\n  'BP.L','LSEG.L','REL.L','DGE.L','BATS.L','AAL.L',\n  'GLEN.L','ANTO.L','FRES.L','NG.L','SSE.L','VOD.L',\n  'BT-A.L','PRU.L','LLOY.L','BARC.L','NWG.L','STAN.L',\n  'LGEN.L','BNZL.L','CRH.L','EXPN.L','III.L','SGE.L',\n  'RR.L','BA.L','MNDI.L','WPP.L','IHG.L','WTB.L',\n  'CPG.L','ABF.L','RKT.L','IMB.L','TSCO.L','SBRY.L',\n  'MNG.L','INF.L','ITRK.L','PSON.L','AUTO.L','RMV.L',\n  'JD.L','ENT.L','HIK.L','SDR.L','ADM.L','SGRO.L',\n  'PSN.L','LAND.L','SVT.L','UU.L','WEIR.L','SPX.L',\n  'SMDS.L','SMT.L','TW.L','AHT.L'\n];\n\nvar allTickers = [];\nfor (var i = 0; i < usStocks.length; i++) allTickers.push({ ticker: usStocks[i], market: 'US', marketName: 'United States (S&P 500)', currency: '$' });\nfor (var i = 0; i < euStocks.length; i++) allTickers.push({ ticker: euStocks[i], market: 'EU', marketName: 'European Markets (Euro Stoxx / Major EU)', currency: '\\u20ac' });\nfor (var i = 0; i < ukStocks.length; i++) allTickers.push({ ticker: ukStocks[i], market: 'UK', marketName: 'United Kingdom (FTSE 100)', currency: '\\u00a3' });\n\nvar now = Math.floor(Date.now() / 1000);\n\nfunction calcRSI(closes, period) {\n  if (closes.length < period + 1) return null;\n  var gains = 0, losses = 0;\n  for (var i = closes.length - period; i < closes.length; i++) {\n    var ch = closes[i] - closes[i - 1];\n    if (ch > 0) gains += ch; else losses += Math.abs(ch);\n  }\n  var ag = gains / period, al = losses / period;\n  if (al === 0) return 100;\n  return 100 - (100 / (1 + ag / al));\n}\n\nfunction calcSMA(closes, period) {\n  if (closes.length < period) return null;\n  var s = closes.slice(closes.length - period);\n  var sum = 0;\n  for (var i = 0; i < s.length; i++) sum += s[i];\n  return sum / s.length;\n}\n\nfunction sleep(ms) {\n  return new Promise(function(r) { setTimeout(r, ms); });\n}\n\nvar markets = {\n  US: { market: 'US', marketName: 'United States (S&P 500)', currency: '$', stocks: [], oversold: [], overbought: [], neutral: [], errors: [] },\n  EU: { market: 'EU', marketName: 'European Markets (Euro Stoxx / Major EU)', currency: '\\u20ac', stocks: [], oversold: [], overbought: [], neutral: [], errors: [] },\n  UK: { market: 'UK', marketName: 'United Kingdom (FTSE 100)', currency: '\\u00a3', stocks: [], oversold: [], overbought: [], neutral: [], errors: [] }\n};\n\nfor (var ti = 0; ti < allTickers.length; ti++) {\n  var t = allTickers[ti];\n  var ticker = t.ticker;\n  var mktKey = t.market;\n  var mkt = markets[mktKey];\n\n  try {\n    // FIXED: Added &events=div to get dividend data from Yahoo\n    var url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(ticker) + '?range=1y&interval=1d&includePrePost=false&events=div';\n\n    var resp = await this.helpers.httpRequest({\n      method: 'GET',\n      url: url,\n      headers: {\n        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',\n        'Accept': 'application/json',\n        'Accept-Language': 'en-US,en;q=0.9',\n        'Referer': 'https://finance.yahoo.com/',\n        'Origin': 'https://finance.yahoo.com'\n      },\n      json: true\n    });\n\n    if (!resp || !resp.chart || !resp.chart.result || !resp.chart.result[0]) {\n      mkt.errors.push({ ticker: ticker, market: mktKey, error: 'No chart data' });\n      if ((ti + 1) % 5 === 0) await sleep(1500);\n      continue;\n    }\n\n    var result = resp.chart.result[0];\n    var meta = result.meta;\n    var quotes = result.indicators.quote[0];\n    var closes = [];\n    for (var ci = 0; ci < quotes.close.length; ci++) {\n      if (quotes.close[ci] !== null && quotes.close[ci] !== undefined) closes.push(quotes.close[ci]);\n    }\n\n    if (closes.length < 180) {\n      mkt.errors.push({ ticker: ticker, market: mktKey, error: 'Only ' + closes.length + ' days data' });\n      if ((ti + 1) % 5 === 0) await sleep(1500);\n      continue;\n    }\n\n    var price = closes[closes.length - 1];\n    var sma = calcSMA(closes, 180);\n    var rsi = calcRSI(closes, 14);\n    if (!sma || rsi === null) {\n      mkt.errors.push({ ticker: ticker, market: mktKey, error: 'Calc failed' });\n      if ((ti + 1) % 5 === 0) await sleep(1500);\n      continue;\n    }\n\n    var dev = ((price - sma) / sma) * 100;\n    var sig = 'NEUTRAL';\n    if (dev < -3) sig = 'OVERSOLD';\n    else if (dev > 3) sig = 'OVERBOUGHT';\n\n    // ====== DIVIDEND DATA EXTRACTION ======\n    var exDiv = null;\n    var divYld = null;\n    var lastExDivDate = null;\n\n    // Check result.events.dividends (populated by &events=div)\n    if (result.events && result.events.dividends) {\n      var divObj = result.events.dividends;\n      var divKeys = Object.keys(divObj);\n      var divEvents = [];\n      for (var dk = 0; dk < divKeys.length; dk++) {\n        divEvents.push(divObj[divKeys[dk]]);\n      }\n\n      if (divEvents.length > 0) {\n        // Sort by date descending\n        divEvents.sort(function(a, b) { return b.date - a.date; });\n\n        // Find most recent ex-div date\n        var lastDivEvent = divEvents[0];\n        lastExDivDate = new Date(lastDivEvent.date * 1000).toISOString().split('T')[0];\n\n        // Check if ex-div was within last 30 days\n        var thirtyDaysAgo = now - 2592000;\n        if (lastDivEvent.date > thirtyDaysAgo && lastDivEvent.date < now) {\n          exDiv = lastExDivDate;\n        }\n\n        // Calculate annualized dividend yield\n        // Sum dividends from last 12 months for more accurate yield\n        var oneYearAgo = now - (365 * 24 * 60 * 60);\n        var annualDiv = 0;\n        var divCount = 0;\n        for (var dv = 0; dv < divEvents.length; dv++) {\n          if (divEvents[dv].date > oneYearAgo) {\n            annualDiv += divEvents[dv].amount;\n            divCount++;\n          }\n        }\n\n        // If we have less than a year of data, annualize based on frequency\n        if (divCount > 0 && divCount < 4 && price > 0) {\n          // Estimate annual: if quarterly, multiply by 4; if semi-annual by 2\n          if (divCount <= 2) {\n            // Likely semi-annual or fewer, use last div * estimated frequency\n            var estimatedAnnual = lastDivEvent.amount * 4;\n            if (divCount === 2) estimatedAnnual = annualDiv * 2;\n            divYld = ((estimatedAnnual / price) * 100).toFixed(2);\n          } else {\n            divYld = ((annualDiv * (4 / divCount) / price) * 100).toFixed(2);\n          }\n        } else if (divCount >= 4 && price > 0) {\n          divYld = ((annualDiv / price) * 100).toFixed(2);\n        } else if (divCount > 0 && price > 0) {\n          // Fallback: last dividend * 4\n          divYld = ((lastDivEvent.amount * 4 / price) * 100).toFixed(2);\n        }\n      }\n    }\n\n    var nm = (meta.longName || meta.shortName || ticker).substring(0, 35);\n    var stock = {\n      ticker: ticker, name: nm, market: mktKey, marketName: t.marketName, currency: t.currency,\n      price: parseFloat(price.toFixed(2)), sma180: parseFloat(sma.toFixed(2)),\n      deviation: parseFloat(dev.toFixed(2)), rsi: parseFloat(rsi.toFixed(2)),\n      signal: sig,\n      exDivDate: exDiv || (lastExDivDate || '\\u2014'),\n      dividendYield: divYld ? (divYld + '%') : '\\u2014',\n      isRecentExDiv: exDiv !== null,\n      lastExDivDate: lastExDivDate || '\\u2014',\n      isError: false\n    };\n    mkt.stocks.push(stock);\n    if (sig === 'OVERSOLD') mkt.oversold.push(stock);\n    else if (sig === 'OVERBOUGHT') mkt.overbought.push(stock);\n    else mkt.neutral.push(stock);\n\n  } catch (err) {\n    mkt.errors.push({ ticker: ticker, market: mktKey, error: String(err.message || err).substring(0, 80) });\n  }\n\n  // Rate limit: pause 1.2s every 5 tickers\n  if ((ti + 1) % 5 === 0) await sleep(1200);\n}\n\n// Sort\nvar mkKeys = ['US','EU','UK'];\nfor (var ki = 0; ki < mkKeys.length; ki++) {\n  markets[mkKeys[ki]].oversold.sort(function(a, b) { return a.deviation - b.deviation; });\n  markets[mkKeys[ki]].overbought.sort(function(a, b) { return b.deviation - a.deviation; });\n}\n\nvar mArr = [markets.US, markets.EU, markets.UK];\nvar summary = [];\nvar allErr = [];\nvar total = 0;\nfor (var si = 0; si < mArr.length; si++) {\n  var m = mArr[si];\n  total += m.stocks.length;\n  for (var ei = 0; ei < m.errors.length; ei++) allErr.push(m.errors[ei]);\n  var ad = 0;\n  if (m.stocks.length > 0) {\n    var td = 0;\n    for (var j = 0; j < m.stocks.length; j++) td += Math.abs(m.stocks[j].deviation);\n    ad = parseFloat((td / m.stocks.length).toFixed(2));\n  }\n  var ec = 0;\n  for (var j = 0; j < m.stocks.length; j++) { if (m.stocks[j].isRecentExDiv) ec++; }\n  summary.push({ market: m.marketName, analyzed: m.stocks.length, oversold: m.oversold.length, overbought: m.overbought.length, neutral: m.neutral.length, avgDeviation: ad, exDivCount: ec });\n}\n\nreturn [{ json: { reportDate: new Date().toISOString().split('T')[0], reportTime: new Date().toISOString(), totalAnalyzed: total, markets: mArr, summary: summary, errors: allErr } }];"
+      },
+      "id": "07b84e94-e311-4c71-aa48-7e055acead9d",
+      "name": "Fetch All Stocks & Calculate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        1392
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "var data = $input.first().json;\n\nfunction formatTable(stocks, limit, currency) {\n  limit = limit || 20;\n  currency = currency || '$';\n  if (stocks.length === 0) return '<p style=\"color:#666;padding:10px;\">No stocks in this category.</p>';\n  var top = stocks.slice(0, limit);\n  var html = '<table style=\"width:100%;border-collapse:collapse;font-size:12px;margin:10px 0;\">';\n  html += '<tr style=\"background:#1a1a2e;color:#fff;\">';\n  html += '<th style=\"padding:8px;text-align:left;\">#</th>';\n  html += '<th style=\"padding:8px;text-align:left;\">Ticker</th>';\n  html += '<th style=\"padding:8px;text-align:left;\">Name</th>';\n  html += '<th style=\"padding:8px;text-align:right;\">Price</th>';\n  html += '<th style=\"padding:8px;text-align:right;\">180d SMA</th>';\n  html += '<th style=\"padding:8px;text-align:right;\">Dev %</th>';\n  html += '<th style=\"padding:8px;text-align:right;\">RSI</th>';\n  html += '<th style=\"padding:8px;text-align:center;\">Signal</th>';\n  html += '<th style=\"padding:8px;text-align:center;\">Ex-Dividend</th>';\n  html += '<th style=\"padding:8px;text-align:right;\">Yield</th>';\n  html += '</tr>';\n  for (var i = 0; i < top.length; i++) {\n    var s = top[i];\n    var bgColor = i % 2 === 0 ? '#f8f9fa' : '#ffffff';\n    var devColor = s.deviation < 0 ? '#d32f2f' : '#2e7d32';\n    var rsiColor = s.rsi < 30 ? '#d32f2f' : (s.rsi > 70 ? '#ff6f00' : '#333');\n    var rsiBold = (s.rsi < 30 || s.rsi > 70) ? 'font-weight:bold;' : '';\n\n    // FIXED: Show last ex-div date even when not recent\n    var exDivDisplay = '\\u2014';\n    var exDivStyle = 'color:#999;';\n    if (s.isRecentExDiv) {\n      exDivDisplay = 'EX-DIV ' + s.exDivDate;\n      exDivStyle = 'color:#1565c0;font-weight:bold;';\n    } else if (s.lastExDivDate && s.lastExDivDate !== '\\u2014') {\n      exDivDisplay = s.lastExDivDate;\n      exDivStyle = 'color:#666;';\n    } else if (s.exDivDate && s.exDivDate !== '\\u2014') {\n      exDivDisplay = s.exDivDate;\n      exDivStyle = 'color:#666;';\n    }\n\n    var signalBg = s.signal === 'OVERSOLD' ? '#ffcdd2' : '#c8e6c9';\n    var signalColor = s.signal === 'OVERSOLD' ? '#c62828' : '#2e7d32';\n    var devPrefix = s.deviation > 0 ? '+' : '';\n\n    html += '<tr style=\"background:' + bgColor + ';border-bottom:1px solid #eee;\">';\n    html += '<td style=\"padding:6px 8px;\">' + (i + 1) + '</td>';\n    html += '<td style=\"padding:6px 8px;font-weight:bold;\">' + s.ticker + '</td>';\n    html += '<td style=\"padding:6px 8px;\">' + s.name + '</td>';\n    html += '<td style=\"padding:6px 8px;text-align:right;font-weight:bold;\">' + currency + s.price + '</td>';\n    html += '<td style=\"padding:6px 8px;text-align:right;\">' + currency + s.sma180 + '</td>';\n    html += '<td style=\"padding:6px 8px;text-align:right;font-weight:bold;color:' + devColor + ';\">' + devPrefix + s.deviation + '%</td>';\n    html += '<td style=\"padding:6px 8px;text-align:right;color:' + rsiColor + ';' + rsiBold + '\">' + s.rsi + '</td>';\n    html += '<td style=\"padding:6px 8px;text-align:center;\"><span style=\"background:' + signalBg + ';color:' + signalColor + ';padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold;\">' + s.signal + '</span></td>';\n    html += '<td style=\"padding:6px 8px;text-align:center;' + exDivStyle + 'font-size:11px;\">' + exDivDisplay + '</td>';\n    html += '<td style=\"padding:6px 8px;text-align:right;\">' + s.dividendYield + '</td>';\n    html += '</tr>';\n  }\n  html += '</table>';\n  return html;\n}\n\nvar reportTimeFormatted = new Date(data.reportTime).toISOString().substring(11, 16) + ' UTC';\nvar emailHtml = '';\nemailHtml += '<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>';\nemailHtml += '<body style=\"font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;background:#f0f2f5;margin:0;padding:20px;\">';\nemailHtml += '<div style=\"max-width:1200px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1);\">';\nemailHtml += '<div style=\"background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#fff;padding:30px;text-align:center;\">';\nemailHtml += '<h1 style=\"margin:0;font-size:28px;\">Global Stock Market Monitor</h1>';\nemailHtml += '<p style=\"margin:8px 0 0;opacity:0.85;font-size:14px;\">180-Day Moving Average Analysis | Oversold and Overbought Screener</p>';\nemailHtml += '<p style=\"margin:8px 0 0;opacity:0.7;font-size:12px;\">Report Date: ' + data.reportDate + ' at ' + reportTimeFormatted + ' | Stocks Analyzed: ' + data.totalAnalyzed + '</p>';\nemailHtml += '</div>';\nemailHtml += '<div style=\"background:#e8eaf6;padding:15px 30px;border-bottom:2px solid #c5cae9;font-size:12px;color:#37474f;\">';\nemailHtml += '<strong>Reading Guide:</strong><br>';\nemailHtml += 'Deviation %: Distance from 180-day SMA. Negative = below average (potential value). Positive = above (potential overvaluation).<br>';\nemailHtml += 'RSI 14: Below 30 = oversold momentum. Above 70 = overbought momentum.<br>';\nemailHtml += 'EX-DIV: Stock went ex-dividend within the last 30 days. Date shown is most recent ex-dividend date.<br>';\nemailHtml += 'Yield: Estimated annualized dividend yield based on recent dividend payments.';\nemailHtml += '</div>';\nemailHtml += '<div style=\"padding:20px 30px;\">';\n\nfor (var idx = 0; idx < data.markets.length; idx++) {\n  var market = data.markets[idx];\n  var summaryData = data.summary[idx];\n  var topMargin = idx > 0 ? '40px' : '0';\n  emailHtml += '<div style=\"margin:' + topMargin + ' 0 20px;\">';\n  emailHtml += '<h2 style=\"color:#1a1a2e;border-bottom:3px solid #0f3460;padding-bottom:10px;margin-bottom:5px;\">' + market.marketName + '</h2>';\n  emailHtml += '<div style=\"background:#f5f5f5;padding:10px 15px;border-radius:6px;font-size:12px;margin-bottom:15px;\">';\n  emailHtml += '<strong>Analyzed:</strong> ' + summaryData.analyzed + ' | ';\n  emailHtml += '<span style=\"color:#d32f2f;\"><strong>Oversold:</strong> ' + summaryData.oversold + '</span> | ';\n  emailHtml += '<span style=\"color:#2e7d32;\"><strong>Overbought:</strong> ' + summaryData.overbought + '</span> | ';\n  emailHtml += '<strong>Neutral:</strong> ' + summaryData.neutral + ' | ';\n  emailHtml += '<strong>Avg Dev:</strong> ' + summaryData.avgDeviation + '% | ';\n  emailHtml += '<strong>Ex-Div:</strong> ' + summaryData.exDivCount;\n  emailHtml += '</div>';\n  emailHtml += '<h3 style=\"color:#c62828;margin:20px 0 5px;\">TOP 20 MOST OVERSOLD (Below 180-Day SMA)</h3>';\n  emailHtml += formatTable(market.oversold, 20, market.currency);\n  emailHtml += '<h3 style=\"color:#2e7d32;margin:20px 0 5px;\">TOP 20 MOST OVERBOUGHT (Above 180-Day SMA)</h3>';\n  emailHtml += formatTable(market.overbought, 20, market.currency);\n  emailHtml += '</div>';\n}\n\nif (data.errors.length > 0) {\n  emailHtml += '<div style=\"margin:30px 0;\">';\n  emailHtml += '<h3 style=\"color:#ff6f00;\">Data Retrieval Issues (' + data.errors.length + ' tickers)</h3>';\n  emailHtml += '<table style=\"width:100%;border-collapse:collapse;font-size:12px;\">';\n  emailHtml += '<tr style=\"background:#fff3e0;\"><th style=\"padding:6px;text-align:left;\">Ticker</th><th style=\"padding:6px;text-align:left;\">Market</th><th style=\"padding:6px;text-align:left;\">Error</th></tr>';\n  for (var ei = 0; ei < data.errors.length; ei++) {\n    var e = data.errors[ei];\n    emailHtml += '<tr style=\"border-bottom:1px solid #eee;\"><td style=\"padding:4px 6px;font-weight:bold;\">' + e.ticker + '</td><td style=\"padding:4px 6px;\">' + e.market + '</td><td style=\"padding:4px 6px;color:#999;\">' + e.error + '</td></tr>';\n  }\n  emailHtml += '</table></div>';\n}\n\nemailHtml += '</div>';\nemailHtml += '<div style=\"background:#f5f5f5;padding:15px 30px;text-align:center;font-size:11px;color:#999;border-top:1px solid #eee;\">';\nemailHtml += 'Generated by N8N Stock Market Tracker<br>';\nemailHtml += 'Data Source: Yahoo Finance v8 Chart API<br>';\nemailHtml += '<em>For informational purposes only. Not financial advice. Always do your own research.</em><br>';\nemailHtml += 'Generated: ' + data.reportTime;\nemailHtml += '</div></div></body></html>';\n\n// Build AI input text - IMPROVED with yield and ex-div data\nvar aiInput = 'Stock Market Report for ' + data.reportDate + '\\n\\n';\nfor (var mi = 0; mi < data.markets.length; mi++) {\n  var mkt = data.markets[mi];\n  aiInput += '\\n=== ' + mkt.marketName + ' ===\\n';\n  aiInput += 'Analyzed: ' + mkt.stocks.length + ', Oversold: ' + mkt.oversold.length + ', Overbought: ' + mkt.overbought.length + '\\n\\n';\n\n  aiInput += 'TOP OVERSOLD:\\n';\n  var osTop = mkt.oversold.slice(0, 15);\n  for (var oi = 0; oi < osTop.length; oi++) {\n    var s = osTop[oi];\n    aiInput += (oi+1) + '. ' + s.ticker + ' (' + s.name + '): ';\n    aiInput += 'Price ' + mkt.currency + s.price + ', SMA ' + mkt.currency + s.sma180 + ', Dev ' + s.deviation + '%, RSI ' + s.rsi;\n    if (s.dividendYield && s.dividendYield !== '\\u2014') {\n      aiInput += ', Yield ' + s.dividendYield;\n    }\n    if (s.isRecentExDiv) {\n      aiInput += ' [RECENT EX-DIV ' + s.exDivDate + ']';\n    } else if (s.lastExDivDate && s.lastExDivDate !== '\\u2014') {\n      aiInput += ', Last Ex-Div ' + s.lastExDivDate;\n    }\n    aiInput += '\\n';\n  }\n\n  aiInput += '\\nTOP OVERBOUGHT:\\n';\n  var obTop = mkt.overbought.slice(0, 15);\n  for (var obi = 0; obi < obTop.length; obi++) {\n    var s2 = obTop[obi];\n    aiInput += (obi+1) + '. ' + s2.ticker + ' (' + s2.name + '): ';\n    aiInput += 'Price ' + mkt.currency + s2.price + ', SMA ' + mkt.currency + s2.sma180 + ', Dev +' + s2.deviation + '%, RSI ' + s2.rsi;\n    if (s2.dividendYield && s2.dividendYield !== '\\u2014') {\n      aiInput += ', Yield ' + s2.dividendYield;\n    }\n    if (s2.isRecentExDiv) {\n      aiInput += ' [RECENT EX-DIV ' + s2.exDivDate + ']';\n    } else if (s2.lastExDivDate && s2.lastExDivDate !== '\\u2014') {\n      aiInput += ', Last Ex-Div ' + s2.lastExDivDate;\n    }\n    aiInput += '\\n';\n  }\n}\n\nreturn [{ json: { emailHtml: emailHtml, aiInput: aiInput, reportDate: data.reportDate, reportTime: data.reportTime, totalAnalyzed: data.totalAnalyzed } }];"
+      },
+      "id": "43fad49a-d725-4efb-bfad-982440440913",
+      "name": "Format HTML Email & AI Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        1392
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Analyze the following stock market data and provide a comprehensive investment summary.\n\nPlease structure your response in clean HTML format with these sections:\n\n1. EXECUTIVE SUMMARY - Brief market overview in 2-3 sentences\n2. TOP 5 OVERSOLD PICKS - Best value opportunities with explanation for each\n3. DIVIDEND OPPORTUNITIES - Oversold stocks with attractive yields\n4. CAUTION OVERBOUGHT STOCKS - Stocks due for pullback warning\n5. SECTOR THEMES - What sectors are oversold vs overbought\n6. RISK ASSESSMENT - Concerning patterns or warnings\n7. BOTTOM LINE - 3-4 actionable takeaways\n\nUse h3 tags for headers. Use ul and li for lists. Use color #d32f2f for warnings, #2e7d32 for opportunities.\n\n{{ $json.aiInput }}",
+        "options": {
+          "systemMessage": "You are an expert stock market analyst. You analyze technical indicators (180-day SMA deviation, RSI-14, dividend yields) to identify investment opportunities and risks across US, European, and UK markets. Be specific with ticker symbols and numbers. Always note this is not financial advice."
+        }
+      },
+      "id": "71425535-92a2-42b4-b8b0-29393e87cb4e",
+      "name": "AI Investment Analysis",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1776,
+        1392
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-flash-latest",
+        "options": {
+          "maxOutputTokens": 16096,
+          "temperature": 0.3
+        }
+      },
+      "id": "fb70723f-91f2-4716-bee4-0e3477a26285",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1776,
+        1616
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YOUR_GEMINI_CREDENTIAL_ID",
+          "name": "Google Gemini API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "var emailData = $('Format HTML Email & AI Input').first().json;\nvar aiNode = $('AI Investment Analysis').first().json;\nvar aiAnalysis = '';\n\nif (aiNode.output) {\n  aiAnalysis = aiNode.output;\n} else if (aiNode.message && aiNode.message.content) {\n  aiAnalysis = aiNode.message.content;\n} else if (aiNode.text) {\n  aiAnalysis = aiNode.text;\n} else if (aiNode.response && aiNode.response.text) {\n  aiAnalysis = aiNode.response.text;\n} else {\n  var keys = Object.keys(aiNode);\n  for (var ki = 0; ki < keys.length; ki++) {\n    if (typeof aiNode[keys[ki]] === 'string' && aiNode[keys[ki]].length > 100) {\n      aiAnalysis = aiNode[keys[ki]];\n      break;\n    }\n  }\n  if (!aiAnalysis) {\n    aiAnalysis = '<p>AI analysis was not available. Debug: ' + JSON.stringify(Object.keys(aiNode)) + '</p>';\n  }\n}\n\nvar completeEmail = '';\ncompleteEmail += '<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>';\ncompleteEmail += '<body style=\"font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;background:#f0f2f5;margin:0;padding:20px;\">';\ncompleteEmail += '<div style=\"max-width:1200px;margin:0 auto;\">';\ncompleteEmail += '<div style=\"background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1);margin-bottom:20px;\">';\ncompleteEmail += '<div style=\"background:linear-gradient(135deg,#4a148c 0%,#7b1fa2 50%,#9c27b0 100%);color:#fff;padding:25px 30px;\">';\ncompleteEmail += '<h1 style=\"margin:0;font-size:24px;\">AI Investment Analysis Summary</h1>';\ncompleteEmail += '<p style=\"margin:5px 0 0;opacity:0.85;font-size:13px;\">Generated by Google Gemini AI | ' + emailData.reportDate + '</p>';\ncompleteEmail += '</div>';\ncompleteEmail += '<div style=\"padding:20px 30px;font-size:14px;line-height:1.6;color:#333;\">';\ncompleteEmail += aiAnalysis;\ncompleteEmail += '<div style=\"margin-top:20px;padding:12px;background:#fff3e0;border-left:4px solid #ff9800;border-radius:4px;font-size:12px;color:#e65100;\">';\ncompleteEmail += '<strong>Disclaimer:</strong> This AI-generated analysis is for informational purposes only and does not constitute financial advice. Always conduct your own research and consult a qualified financial advisor before making investment decisions.';\ncompleteEmail += '</div></div></div>';\ncompleteEmail += emailData.emailHtml;\ncompleteEmail += '</div></body></html>';\n\nreturn [{ json: { completeEmail: completeEmail, subject: 'Stock Market Monitor - ' + emailData.reportDate + ' - Oversold and Overbought Analysis', reportDate: emailData.reportDate, totalAnalyzed: emailData.totalAnalyzed } }];"
+      },
+      "id": "397842af-1bc2-47bd-90ea-b268c3d06b07",
+      "name": "Combine AI Summary + Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2096,
+        1392
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "YOUR_EMAIL@example.com",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.completeEmail }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "2cdea938-43df-4eb8-9e74-736e46d48432",
+      "name": "Send Gmail Report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2320,
+        1392
+      ],
+      "webhookId": "YOUR_WEBHOOK_ID",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "e315e6d1-76f3-40d8-a747-621dd23465b9",
+      "name": "Daily Schedule (8AM Weekdays)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        1104,
+        1392
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Fetch All Stocks & Calculate": {
+      "main": [
+        [
+          {
+            "node": "Format HTML Email & AI Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format HTML Email & AI Input": {
+      "main": [
+        [
+          {
+            "node": "AI Investment Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Investment Analysis": {
+      "main": [
+        [
+          {
+            "node": "Combine AI Summary + Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Investment Analysis",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine AI Summary + Report": {
+      "main": [
+        [
+          {
+            "node": "Send Gmail Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Schedule (8AM Weekdays)": {
+      "main": [
+        [
+          {
+            "node": "Fetch All Stocks & Calculate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "M4RIrZMt6jCc9SFy",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "ad7b87f1-1c27-4272-8e93-b779d33841c3",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "YOUR_INSTANCE_ID"
+  },
+  "id": "YOUR_WORKFLOW_ID",
+  "tags": []
+}
